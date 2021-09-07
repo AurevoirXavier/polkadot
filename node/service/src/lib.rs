@@ -679,7 +679,7 @@ where
 		backend,
 		mut task_manager,
 		keystore_container,
-		mut select_chain,
+		select_chain,
 		import_queue,
 		transaction_pool,
 		other: (rpc_extensions_builder, import_setup, rpc_setup, slot_duration, mut telemetry),
@@ -850,7 +850,8 @@ where
 		local_keystore.and_then(move |k| authority_discovery_service.map(|a| (a, k)));
 
 	let overseer_handle = if let Some((authority_discovery_service, keystore)) = maybe_params {
-		let (overseer, overseer_handle) = overseer_gen
+		// already have access to the handle
+		let (overseer, _handle) = overseer_gen
 			.generate::<service::SpawnTaskHandle, FullClient<RuntimeApi, ExecutorDispatch>>(
 				OverseerGenArgs {
 					leaves: active_leaves,
@@ -883,32 +884,21 @@ where
 			Box::pin(async move {
 				use futures::{pin_mut, select, FutureExt};
 
-				let forward = polkadot_overseer::forward_events(overseer_client, handle_clone);
+					let forward = polkadot_overseer::forward_events(overseer_client, handle);
 
-				let forward = forward.fuse();
-				let overseer_fut = overseer.run().fuse();
+					let forward = forward.fuse();
+					let overseer_fut = overseer.run().fuse();
 
-				pin_mut!(overseer_fut);
-				pin_mut!(forward);
+					pin_mut!(overseer_fut);
+					pin_mut!(forward);
 
-				select! {
-					_ = forward => (),
-					_ = overseer_fut => (),
-					complete => (),
-				}
-			}),
-		);
-		// we should remove this check before we deploy parachains on polkadot
-		// TODO: https://github.com/paritytech/polkadot/issues/3326
-		let should_connect_overseer = chain_spec.is_kusama() ||
-			chain_spec.is_westend() ||
-			chain_spec.is_rococo() ||
-			chain_spec.is_wococo();
-
-		if should_connect_overseer {
-			select_chain.connect_to_overseer(overseer_handle.clone());
-		} else {
-			tracing::info!("Overseer is running in the disconnected state");
+					select! {
+						_ = forward => (),
+						_ = overseer_fut => (),
+						complete => (),
+					}
+				}),
+			);
 		}
 		Some(handle)
 	} else {
@@ -1244,6 +1234,10 @@ pub fn new_chain_ops(
 > {
 	config.keystore = service::config::KeystoreConfig::InMemory;
 
+	// FIXME no overseer is ever constructed here
+	let overseer_connector = OverseerConnector::default();
+	let handle = Handle(overseer_connector.as_handle().clone());
+	let handle = &handle;
 	#[cfg(feature = "rococo-native")]
 	if config.chain_spec.is_rococo() || config.chain_spec.is_wococo() {
 		let service::PartialComponents { client, backend, import_queue, task_manager, .. } =
