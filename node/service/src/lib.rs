@@ -68,6 +68,8 @@ use polkadot_subsystem::jaeger;
 use std::{sync::Arc, time::Duration};
 
 use prometheus_endpoint::Registry;
+#[cfg(feature = "full-node")]
+use service::KeystoreContainer;
 use service::RpcHandlers;
 use telemetry::TelemetryWorker;
 #[cfg(feature = "full-node")]
@@ -319,36 +321,29 @@ type LightClient<RuntimeApi, ExecutorDispatch> =
 	service::TLightClientWithBackend<Block, RuntimeApi, ExecutorDispatch, LightBackend>;
 
 #[cfg(feature = "full-node")]
-fn new_partial<RuntimeApi, ExecutorDispatch>(
+struct Basics<RuntimeApi, ExecutorDispatch>
+where
+	RuntimeApi: ConstructRuntimeApi<Block, FullClient<RuntimeApi, ExecutorDispatch>>
+		+ Send
+		+ Sync
+		+ 'static,
+	RuntimeApi::RuntimeApi:
+		RuntimeApiCollection<StateBackend = sc_client_api::StateBackendFor<FullBackend, Block>>,
+	ExecutorDispatch: NativeExecutionDispatch + 'static,
+{
+	task_manager: TaskManager,
+	client: Arc<FullClient<RuntimeApi, ExecutorDispatch>>,
+	backend: Arc<FullBackend>,
+	keystore_container: KeystoreContainer,
+	telemetry: Option<Telemetry>,
+}
+
+#[cfg(feature = "full-node")]
+fn new_partial_basics<RuntimeApi, ExecutorDispatch>(
 	config: &mut Configuration,
 	jaeger_agent: Option<std::net::SocketAddr>,
 	telemetry_worker_handle: Option<TelemetryWorkerHandle>,
-) -> Result<
-	service::PartialComponents<
-		FullClient<RuntimeApi, ExecutorDispatch>,
-		FullBackend,
-		FullSelectChain,
-		sc_consensus::DefaultImportQueue<Block, FullClient<RuntimeApi, ExecutorDispatch>>,
-		sc_transaction_pool::FullPool<Block, FullClient<RuntimeApi, ExecutorDispatch>>,
-		(
-			impl service::RpcExtensionBuilder,
-			(
-				babe::BabeBlockImport<
-					Block,
-					FullClient<RuntimeApi, ExecutorDispatch>,
-					FullGrandpaBlockImport<RuntimeApi, ExecutorDispatch>,
-				>,
-				grandpa::LinkHalf<Block, FullClient<RuntimeApi, ExecutorDispatch>, FullSelectChain>,
-				babe::BabeLink<Block>,
-				beefy_gadget::notification::BeefySignedCommitmentSender<Block>,
-			),
-			grandpa::SharedVoterState,
-			std::time::Duration, // slot-duration
-			Option<Telemetry>,
-		),
-	>,
-	Error,
->
+) -> Result<Basics<RuntimeApi, ExecutorDispatch>, Error>
 where
 	RuntimeApi: ConstructRuntimeApi<Block, FullClient<RuntimeApi, ExecutorDispatch>>
 		+ Send
@@ -391,7 +386,7 @@ where
 		)?;
 	let client = Arc::new(client);
 
-	let telemetry = telemetry.map(|(worker, telemetry)| {
+	let telemetry: Option<_> = telemetry.map(|(worker, telemetry)| {
 		if let Some(worker) = worker {
 			task_manager.spawn_handle().spawn("telemetry", worker.run());
 		}
@@ -400,7 +395,72 @@ where
 
 	jaeger_launch_collector_with_agent(task_manager.spawn_handle(), &*config, jaeger_agent)?;
 
-	let select_chain = relay_chain_selection::SelectRelayChainWithFallback::new(
+	Ok(Basics { task_manager, client, backend, keystore_container, telemetry })
+}
+
+#[cfg(feature = "full-node")]
+fn new_partial<RuntimeApi, ExecutorDispatch>(
+	config: &mut Configuration,
+	handle: &Handle,
+	jaeger_agent: Option<std::net::SocketAddr>,
+	telemetry_worker_handle: Option<TelemetryWorkerHandle>,
+) -> Result<
+	service::PartialComponents<
+		FullClient<RuntimeApi, ExecutorDispatch>,
+		FullBackend,
+		FullSelectChain,
+		sc_consensus::DefaultImportQueue<Block, FullClient<RuntimeApi, ExecutorDispatch>>,
+		sc_transaction_pool::FullPool<Block, FullClient<RuntimeApi, ExecutorDispatch>>,
+		(
+			impl service::RpcExtensionBuilder,
+			(
+				babe::BabeBlockImport<
+					Block,
+					FullClient<RuntimeApi, ExecutorDispatch>,
+					FullGrandpaBlockImport<RuntimeApi, ExecutorDispatch>,
+				>,
+				grandpa::LinkHalf<Block, FullClient<RuntimeApi, ExecutorDispatch>, FullSelectChain>,
+				babe::BabeLink<Block>,
+				beefy_gadget::notification::BeefySignedCommitmentSender<Block>,
+			),
+			grandpa::SharedVoterState,
+			std::time::Duration, // slot-duration
+			Option<Telemetry>,
+		),
+	>,
+	Error,
+>
+where
+	RuntimeApi: ConstructRuntimeApi<Block, FullClient<RuntimeApi, ExecutorDispatch>>
+		+ Send
+		+ Sync
+		+ 'static,
+	RuntimeApi::RuntimeApi:
+		RuntimeApiCollection<StateBackend = sc_client_api::StateBackendFor<FullBackend, Block>>,
+	ExecutorDispatch: NativeExecutionDispatch + 'static,
+{
+	let Basics::<RuntimeApi, ExecutorDispatch> {
+		task_manager,
+		client,
+		keystore_container,
+		backend,
+		telemetry,
+	} = new_partial_basics::<RuntimeApi, ExecutorDispatch>(
+		config,
+		jaeger_agent,
+		telemetry_worker_handle,
+	)?;
+
+	// we should remove this check before we deploy parachains on polkadot
+	// TODO: https://github.com/paritytech/polkadot/issues/3326
+	let chain_spec = &config.chain_spec as &dyn IdentifyVariant;
+
+	let is_relay_chain = chain_spec.is_kusama() ||
+		chain_spec.is_westend() ||
+		chain_spec.is_rococo() ||
+		chain_spec.is_wococo();
+
+	let select_chain = relay_chain_selection::SelectRelayChain::new(
 		backend.clone(),
 		Handle::new_disconnected(),
 		polkadot_node_subsystem_util::metrics::Metrics::register(config.prometheus_registry())?,
