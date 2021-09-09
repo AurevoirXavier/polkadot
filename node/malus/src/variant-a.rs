@@ -26,8 +26,9 @@ use color_eyre::eyre;
 use polkadot_cli::{
 	prepared_overseer_builder,
 	service::{
-		AuthorityDiscoveryApi, AuxStore, BabeApi, Block, Error, HeaderBackend, Overseer,
-		OverseerGen, OverseerGenArgs, ParachainHost, ProvideRuntimeApi, SpawnNamed,
+		AuthorityDiscoveryApi, AuxStore, BabeApi, Block, Error, HeaderBackend,
+		OverseerGen, OverseerGenArgs, ParachainHost,
+		ProvideRuntimeApi, SpawnNamed,
 	},
 	Cli,
 };
@@ -37,7 +38,7 @@ use polkadot_cli::{
 use polkadot_node_core_candidate_validation::CandidateValidationSubsystem;
 use polkadot_node_subsystem::{
 	messages::{AllMessages, CandidateValidationMessage},
-	overseer::{self, OverseerHandle},
+	overseer::{self, OverseerHandle, OverseerConnector, Overseer},
 	FromOverseer,
 };
 
@@ -86,6 +87,7 @@ struct BehaveMaleficient;
 impl OverseerGen for BehaveMaleficient {
 	fn generate<'a, Spawner, RuntimeClient>(
 		&self,
+		connector: OverseerConnector,
 		args: OverseerGenArgs<'a, Spawner, RuntimeClient>,
 	) -> Result<(Overseer<Spawner, Arc<RuntimeClient>>, OverseerHandle), Error>
 	where
@@ -105,8 +107,8 @@ impl OverseerGen for BehaveMaleficient {
 					),
 					Skippy::default(),
 				)
-			})?
-			.build()
+			})
+			.build_with_connector(connector)
 			.map_err(|e| e.into())
 	}
 }
