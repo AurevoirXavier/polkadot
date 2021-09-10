@@ -709,8 +709,7 @@ where
 	let name = config.network.node_name.clone();
 
 	let overseer_connector = OverseerConnector::default();
-
-	let handle = Handle(overseer_connector.as_handle().clone());
+	let handle = Handle::Connected(overseer_connector.as_handle().clone());
 
 	let basics = new_partial_basics::<RuntimeApi, ExecutorDispatch>(
 		&mut config,
@@ -727,13 +726,16 @@ where
 		chain_spec.is_rococo() ||
 		chain_spec.is_wococo();
 
+	if is_relay_chain {
+		handle.connect_to_overseer(handle.clone())
+	}
+
 	let prometheus_registry = config.prometheus_registry().cloned();
 
 	use relay_chain_selection::SelectRelayChain;
 
 	let select_chain = SelectRelayChain::new(
 		basics.backend.clone(),
-		is_relay_chain,
 		handle.clone(),
 		polkadot_node_subsystem_util::metrics::Metrics::register(prometheus_registry.as_ref())?,
 	);
