@@ -394,7 +394,7 @@ mod tests {
 				.build()
 				.unwrap();
 
-		let mut handle = Handle(handle);
+		let mut handle = Handle::Connected(handle);
 
 		spawner.spawn("overseer", overseer.run().then(|_| async { () }).boxed());
 

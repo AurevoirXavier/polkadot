@@ -33,7 +33,7 @@ use polkadot_primitives::v1::{
 };
 
 use crate::{
-	self as overseer, dummy::dummy_overseer_builder, gen::Delay, HeadSupportsParachains, Overseer,
+	self as overseer, dummy::{one_for_all_overseer_builder, dummy_overseer_builder}, gen::Delay, HeadSupportsParachains,
 };
 use metered_channel as metered;
 
@@ -176,7 +176,7 @@ fn overseer_works() {
 			.replace_candidate_backing(move |_| TestSubsystem2(s2_tx))
 			.build()
 			.unwrap();
-		let mut handle = Handle::new(handle);
+		let mut handle = Handle::Connected(handle);
 		let overseer_fut = overseer.run().fuse();
 
 		pin_mut!(overseer_fut);
@@ -237,7 +237,7 @@ fn overseer_metrics_work() {
 				.build()
 				.unwrap();
 
-		let mut handle = Handle::new(handle);
+		let mut handle = Handle::Connected(handle);
 		let overseer_fut = overseer.run().fuse();
 
 		pin_mut!(overseer_fut);
@@ -403,7 +403,7 @@ fn overseer_start_stop_works() {
 			.leaves(block_info_to_pair(vec![first_block]))
 			.build()
 			.unwrap();
-		let mut handle = Handle::new(handle);
+		let mut handle = Handle::Connected(handle);
 
 		let overseer_fut = overseer.run().fuse();
 		pin_mut!(overseer_fut);
@@ -502,7 +502,7 @@ fn overseer_finalize_works() {
 			.leaves(block_info_to_pair(vec![first_block, second_block]))
 			.build()
 			.unwrap();
-		let mut handle = Handle::new(handle);
+		let mut handle = Handle::Connected(handle);
 
 		let overseer_fut = overseer.run().fuse();
 		pin_mut!(overseer_fut);
@@ -590,7 +590,7 @@ fn do_not_send_empty_leaves_update_on_block_finalization() {
 			.build()
 			.unwrap();
 
-		let mut handle = Handle::new(handle);
+		let mut handle = Handle::Connected(handle);
 
 		let overseer_fut = overseer.run().fuse();
 		pin_mut!(overseer_fut);
@@ -840,40 +840,12 @@ fn overseer_all_subsystems_receive_signals_and_messages() {
 			msgs_received.clone(),
 		);
 
-		let (overseer, handle) = Overseer::builder()
-			.candidate_validation(subsystem.clone())
-			.candidate_backing(subsystem.clone())
-			.collation_generation(subsystem.clone())
-			.collator_protocol(subsystem.clone())
-			.statement_distribution(subsystem.clone())
-			.availability_distribution(subsystem.clone())
-			.availability_recovery(subsystem.clone())
-			.bitfield_signing(subsystem.clone())
-			.bitfield_distribution(subsystem.clone())
-			.provisioner(subsystem.clone())
-			.runtime_api(subsystem.clone())
-			.availability_store(subsystem.clone())
-			.network_bridge(subsystem.clone())
-			.chain_api(subsystem.clone())
-			.approval_distribution(subsystem.clone())
-			.approval_voting(subsystem.clone())
-			.gossip_support(subsystem.clone())
-			.dispute_coordinator(subsystem.clone())
-			.dispute_participation(subsystem.clone())
-			.dispute_distribution(subsystem.clone())
-			.chain_selection(subsystem.clone())
-			.leaves(Default::default())
-			.span_per_active_leaf(Default::default())
-			.active_leaves(Default::default())
-			.activation_external_listeners(Default::default())
-			.known_leaves(LruCache::new(KNOWN_LEAVES_CACHE_SIZE))
-			.supports_parachains(MockSupportsParachains)
-			.spawner(spawner)
-			.metrics(Metrics::default())
+		let (overseer, handle) = one_for_all_overseer_builder(spawner, MockSupportsParachains, subsystem, None)
+			.unwrap()
 			.build()
 			.unwrap();
 
-		let mut handle = Handle::new(handle);
+		let mut handle = Handle::Connected(handle);
 		let overseer_fut = overseer.run().fuse();
 
 		pin_mut!(overseer_fut);

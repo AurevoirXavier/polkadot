@@ -27,7 +27,7 @@ mod relay_chain_selection;
 pub mod overseer;
 
 #[cfg(feature = "full-node")]
-pub use self::overseer::{OverseerGen, OverseerGenArgs, RealOverseerGen};
+pub use self::overseer::{OverseerGen, OverseerGenArgs, RealOverseerGen, OverseerConnector};
 
 #[cfg(all(test, feature = "disputes"))]
 mod tests;
@@ -58,6 +58,7 @@ pub use {
 	sp_authority_discovery::AuthorityDiscoveryApi,
 	sp_blockchain::HeaderBackend,
 	sp_consensus_babe::BabeApi,
+	relay_chain_selection::SelectRelayChainWithFallback,
 };
 
 #[cfg(feature = "full-node")]
@@ -709,7 +710,6 @@ where
 	let name = config.network.node_name.clone();
 
 	let overseer_connector = OverseerConnector::default();
-	let handle = Handle::Connected(overseer_connector.as_handle().clone());
 
 	let basics = new_partial_basics::<RuntimeApi, ExecutorDispatch>(
 		&mut config,
@@ -718,7 +718,7 @@ where
 	)?;
 
 	// we should remove this check before we deploy parachains on polkadot
-	// TODO: https://github.com/paritytech/polkadot/issues/3326
+	// TODO: <https://github.com/paritytech/polkadot/issues/3326>
 	let chain_spec = &config.chain_spec as &dyn IdentifyVariant;
 
 	let is_relay_chain = chain_spec.is_kusama() ||
@@ -726,20 +726,22 @@ where
 		chain_spec.is_rococo() ||
 		chain_spec.is_wococo();
 
+	// we shoud pass the `is_relay_chain` explicitly rather than implcitly re-using
+	// the `disconnected` state for that
+	// TODO: <https://github.com/paritytech/polkadot/pull/3868>
+	let mut handle = Handle::new_disconnected();
 	if is_relay_chain {
-		handle.connect_to_overseer(handle.clone())
+		handle.connect_to_overseer(overseer_connector.as_handle().clone())
 	}
 
 	let prometheus_registry = config.prometheus_registry().cloned();
 
-	use relay_chain_selection::SelectRelayChain;
-
-	let select_chain = SelectRelayChain::new(
+	let select_chain = SelectRelayChainWithFallback::new(
 		basics.backend.clone(),
 		handle.clone(),
 		polkadot_node_subsystem_util::metrics::Metrics::register(prometheus_registry.as_ref())?,
 	);
-	let service::PartialComponents::<_, _, SelectRelayChain<_>, _, _, _> {
+	let service::PartialComponents::<_, _, SelectRelayChainWithFallback<_>, _, _, _> {
 		client,
 		backend,
 		mut task_manager,
@@ -748,7 +750,7 @@ where
 		import_queue,
 		transaction_pool,
 		other: (rpc_extensions_builder, import_setup, rpc_setup, slot_duration, mut telemetry),
-	} = new_partial::<RuntimeApi, ExecutorDispatch, SelectRelayChain<_>>(
+	} = new_partial::<RuntimeApi, ExecutorDispatch, SelectRelayChainWithFallback<_>>(
 		&mut config,
 		basics,
 		select_chain,
@@ -916,6 +918,7 @@ where
 		// already have access to the handle
 		let (overseer, _handle) = overseer_gen
 			.generate::<service::SpawnTaskHandle, FullClient<RuntimeApi, ExecutorDispatch>>(
+				overseer_connector,
 				OverseerGenArgs {
 					leaves: active_leaves,
 					keystore,
@@ -939,30 +942,29 @@ where
 					dispute_coordinator_config,
 				},
 			)?;
-		let handle = Handle::Connected(overseer_handle.clone());
-		let handle_clone = handle.clone();
+		{
+			let handle = handle.clone();
+			task_manager.spawn_essential_handle().spawn_blocking(
+				"overseer",
+				Box::pin(async move {
+					use futures::{pin_mut, select, FutureExt};
 
-		task_manager.spawn_essential_handle().spawn_blocking(
-			"overseer",
-			Box::pin(async move {
-				use futures::{pin_mut, select, FutureExt};
+						let forward = polkadot_overseer::forward_events(overseer_client, handle);
 
-					let forward = polkadot_overseer::forward_events(overseer_client, handle);
+						let forward = forward.fuse();
+						let overseer_fut = overseer.run().fuse();
 
-					let forward = forward.fuse();
-					let overseer_fut = overseer.run().fuse();
+						pin_mut!(overseer_fut);
+						pin_mut!(forward);
 
-					pin_mut!(overseer_fut);
-					pin_mut!(forward);
-
-					select! {
-						_ = forward => (),
-						_ = overseer_fut => (),
-						complete => (),
-					}
-				}),
-			);
-		}
+						select! {
+							_ = forward => (),
+							_ = overseer_fut => (),
+							complete => (),
+						}
+					}),
+				);
+			}
 		Some(handle)
 	} else {
 		None
