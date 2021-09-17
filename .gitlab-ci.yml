@@ -113,13 +113,13 @@ default:
       file:                        false
     GITHUB_TOKEN:
       vault:                       cicd/gitlab/$CI_PROJECT_PATH/GITHUB_TOKEN@kv
-      file:                        false    
+      file:                        false
     MATRIX_ACCESS_TOKEN:
       vault:                       cicd/gitlab/$CI_PROJECT_PATH/MATRIX_ACCESS_TOKEN@kv
       file:                        false
     MATRIX_ROOM_ID:
       vault:                       cicd/gitlab/$CI_PROJECT_PATH/MATRIX_ROOM_ID@kv
-      file:                        false   
+      file:                        false
     PARITYPR_USER:
       vault:                       cicd/gitlab/$CI_PROJECT_PATH/PARITYPR_USER@kv
       file:                        false
@@ -341,8 +341,8 @@ publish-polkadot-image:
   <<:                              *build-push-image
   variables:
     <<:                            *image-variables
-    # scripts/docker/Dockerfile
-    DOCKERFILE:                    Dockerfile
+    # scripts/docker/ci_debug.Dockerfile
+    DOCKERFILE:                    ci_debug.Dockerfile
     IMAGE_NAME:                    docker.io/paritypr/synth-wave
   rules:
     # Don't run on releases - this is handled by the Github Action here:
@@ -377,8 +377,8 @@ publish-adder-collator-image:
   <<:                              *build-push-image
   variables:
     <<:                            *image-variables
-    # scripts/docker/collator.Dockerfile
-    DOCKERFILE:                    collator.Dockerfile
+    # scripts/docker/ci_collator.Dockerfile
+    DOCKERFILE:                    ci_collator.Dockerfile
     IMAGE_NAME:                    docker.io/paritypr/colander
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
